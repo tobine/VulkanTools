@@ -865,7 +865,6 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     #TODO138 : disabling snapshot
                     #replay_gen_source += '                m_pVktraceSnapshotPrint = NULL;\n'
                     replay_gen_source += '                m_objMapper.rm_from_devices_map(pPacket->device);\n'
-                    replay_gen_source += '                m_display->m_initedVK = false;\n'
                     replay_gen_source += '            }\n'
                 elif cmdname in get_ext_layers_proto:
                     replay_gen_source += '            if (replayResult == VK_ERROR_LAYER_NOT_PRESENT || replayResult == VK_INCOMPLETE) {\n'

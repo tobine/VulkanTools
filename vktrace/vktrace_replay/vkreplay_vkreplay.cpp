@@ -37,16 +37,22 @@
 #include "vktrace_vk_packet_id.h"
 #include "vktrace_trace_packet_utils.h"
 
+#if defined(_WIN32) || defined(_WIN64)
+#define strcasecmp _stricmp  // Used for argument parsing
+#endif
+
 using namespace std;
 #include "vktrace_pageguard_memorycopy.h"
 
 vkreplayer_settings *g_pReplaySettings;
 
-vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_header *pFileHeader) {
+vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_header *pFileHeader,
+                   vktrace_replay::ReplayDisplayImp *display) {
     g_pReplaySettings = pReplaySettings;
-    m_display = new vkDisplay();
     m_pDSDump = NULL;
     m_pCBDump = NULL;
+    m_display = display;
+    m_displayServer = pReplaySettings->displayServer;
     //    m_pVktraceSnapshotPrint = NULL;
     m_objMapper.m_adjustForGPU = false;
 
@@ -77,21 +83,15 @@ int vkReplay::init(vktrace_replay::ReplayDisplay &disp) {
         return -1;
     }
     m_vkFuncs.init_funcs(handle);
+
     disp.set_implementation(m_display);
     if ((err = m_display->init(disp.get_gpu())) != 0) {
         vktrace_LogError("Failed to init vulkan display.");
         return err;
     }
-    if (disp.get_window_handle() == 0) {
-        if ((err = m_display->create_window(disp.get_width(), disp.get_height())) != 0) {
-            vktrace_LogError("Failed to create Window");
-            return err;
-        }
-    } else {
-        if ((err = m_display->set_window(disp.get_window_handle(), disp.get_width(), disp.get_height())) != 0) {
-            vktrace_LogError("Failed to set Window");
-            return err;
-        }
+    if ((err = m_display->create_window(disp.get_width(), disp.get_height())) != 0) {
+        vktrace_LogError("Failed to create Window");
+        return err;
     }
 
     m_replay_endianess = get_endianess();
@@ -168,105 +168,106 @@ VkResult vkReplay::manually_replay_vkCreateInstance(packet_vkCreateInstance *pPa
     VkResult replayResult = VK_ERROR_VALIDATION_FAILED_EXT;
     VkInstanceCreateInfo *pCreateInfo;
     char **ppEnabledLayerNames = NULL, **saved_ppLayers;
-    if (!m_display->m_initedVK) {
-        VkInstance inst;
 
-        const char strScreenShot[] = "VK_LAYER_LUNARG_screenshot";
-        pCreateInfo = (VkInstanceCreateInfo *)pPacket->pCreateInfo;
-        if (g_pReplaySettings->screenshotList != NULL) {
-            // enable screenshot layer if it is available and not already in list
-            bool found_ss = false;
-            for (uint32_t i = 0; i < pCreateInfo->enabledLayerCount; i++) {
-                if (!strcmp(pCreateInfo->ppEnabledLayerNames[i], strScreenShot)) {
+    VkInstance inst;
+
+    const char strScreenShot[] = "VK_LAYER_LUNARG_screenshot";
+    pCreateInfo = (VkInstanceCreateInfo *)pPacket->pCreateInfo;
+    if (g_pReplaySettings->screenshotList != NULL) {
+        // enable screenshot layer if it is available and not already in list
+        bool found_ss = false;
+        for (uint32_t i = 0; i < pCreateInfo->enabledLayerCount; i++) {
+            if (!strcmp(pCreateInfo->ppEnabledLayerNames[i], strScreenShot)) {
+                found_ss = true;
+                break;
+            }
+        }
+        if (!found_ss) {
+            uint32_t count;
+
+            // query to find if ScreenShot layer is available
+            m_vkFuncs.real_vkEnumerateInstanceLayerProperties(&count, NULL);
+            VkLayerProperties *props = (VkLayerProperties *)vktrace_malloc(count * sizeof(VkLayerProperties));
+            if (props && count > 0) m_vkFuncs.real_vkEnumerateInstanceLayerProperties(&count, props);
+            for (uint32_t i = 0; i < count; i++) {
+                if (!strcmp(props[i].layerName, strScreenShot)) {
                     found_ss = true;
                     break;
                 }
             }
-            if (!found_ss) {
-                uint32_t count;
-
-                // query to find if ScreenShot layer is available
-                m_vkFuncs.real_vkEnumerateInstanceLayerProperties(&count, NULL);
-                VkLayerProperties *props = (VkLayerProperties *)vktrace_malloc(count * sizeof(VkLayerProperties));
-                if (props && count > 0) m_vkFuncs.real_vkEnumerateInstanceLayerProperties(&count, props);
-                for (uint32_t i = 0; i < count; i++) {
-                    if (!strcmp(props[i].layerName, strScreenShot)) {
-                        found_ss = true;
-                        break;
-                    }
+            if (found_ss) {
+                // screenshot layer is available so enable it
+                ppEnabledLayerNames = (char **)vktrace_malloc((pCreateInfo->enabledLayerCount + 1) * sizeof(char *));
+                for (uint32_t i = 0; i < pCreateInfo->enabledLayerCount && ppEnabledLayerNames; i++) {
+                    ppEnabledLayerNames[i] = (char *)pCreateInfo->ppEnabledLayerNames[i];
                 }
-                if (found_ss) {
-                    // screenshot layer is available so enable it
-                    ppEnabledLayerNames = (char **)vktrace_malloc((pCreateInfo->enabledLayerCount + 1) * sizeof(char *));
-                    for (uint32_t i = 0; i < pCreateInfo->enabledLayerCount && ppEnabledLayerNames; i++) {
-                        ppEnabledLayerNames[i] = (char *)pCreateInfo->ppEnabledLayerNames[i];
-                    }
-                    ppEnabledLayerNames[pCreateInfo->enabledLayerCount] = (char *)vktrace_malloc(strlen(strScreenShot) + 1);
-                    strcpy(ppEnabledLayerNames[pCreateInfo->enabledLayerCount++], strScreenShot);
-                    saved_ppLayers = (char **)pCreateInfo->ppEnabledLayerNames;
-                    pCreateInfo->ppEnabledLayerNames = ppEnabledLayerNames;
-                }
-                vktrace_free(props);
+                ppEnabledLayerNames[pCreateInfo->enabledLayerCount] = (char *)vktrace_malloc(strlen(strScreenShot) + 1);
+                strcpy(ppEnabledLayerNames[pCreateInfo->enabledLayerCount++], strScreenShot);
+                saved_ppLayers = (char **)pCreateInfo->ppEnabledLayerNames;
+                pCreateInfo->ppEnabledLayerNames = ppEnabledLayerNames;
             }
+            vktrace_free(props);
         }
+    }
 
-        char **saved_ppExtensions = (char **)pCreateInfo->ppEnabledExtensionNames;
-        int savedExtensionCount = pCreateInfo->enabledExtensionCount;
-        vector<const char *> extension_names;
-        vector<string> outlist;
+    char **saved_ppExtensions = (char **)pCreateInfo->ppEnabledExtensionNames;
+    int savedExtensionCount = pCreateInfo->enabledExtensionCount;
+    vector<const char *> extension_names;
+    vector<string> outlist;
 
 #if defined(PLATFORM_LINUX)
 #if !defined(ANDROID)
-        outlist.push_back("VK_KHR_android_surface");
-#if defined VKREPLAY_USE_WSI_XCB
-        extension_names.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
-#elif defined VKREPLAY_USE_WSI_WAYLAND
-        extension_names.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+    outlist.push_back("VK_KHR_android_surface");
+#if defined VK_KHR_XCB_SURFACE_EXTENSION_NAME
+    extension_names.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #endif
-        outlist.push_back("VK_KHR_xlib_surface");
-        outlist.push_back("VK_KHR_wayland_surface");
-        outlist.push_back("VK_KHR_win32_surface");
+#if defined VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME
+    extension_names.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+#endif
+    outlist.push_back("VK_KHR_xlib_surface");
+    outlist.push_back("VK_KHR_wayland_surface");
+    outlist.push_back("VK_KHR_win32_surface");
 #else
-        extension_names.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
-        outlist.push_back("VK_KHR_win32_surface");
-        outlist.push_back("VK_KHR_xlib_surface");
-        outlist.push_back("VK_KHR_xcb_surface");
-        outlist.push_back("VK_KHR_wayland_surface");
-        outlist.push_back("VK_KHR_mir_surface");
+    extension_names.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
+    outlist.push_back("VK_KHR_win32_surface");
+    outlist.push_back("VK_KHR_xlib_surface");
+    outlist.push_back("VK_KHR_xcb_surface");
+    outlist.push_back("VK_KHR_wayland_surface");
+    outlist.push_back("VK_KHR_mir_surface");
 #endif  // ANDROID
 #else
-        extension_names.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-        outlist.push_back("VK_KHR_xlib_surface");
-        outlist.push_back("VK_KHR_xcb_surface");
-        outlist.push_back("VK_KHR_wayland_surface");
-        outlist.push_back("VK_KHR_mir_surface");
+    extension_names.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+    outlist.push_back("VK_KHR_xlib_surface");
+    outlist.push_back("VK_KHR_xcb_surface");
+    outlist.push_back("VK_KHR_wayland_surface");
+    outlist.push_back("VK_KHR_mir_surface");
 #endif
 
-        // Add any extensions that are both replayable and in the packet
-        for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; i++) {
-            if (find(outlist.begin(), outlist.end(), pCreateInfo->ppEnabledExtensionNames[i]) == outlist.end()) {
-                extension_names.push_back(pCreateInfo->ppEnabledExtensionNames[i]);
-            }
-        }
-        pCreateInfo->ppEnabledExtensionNames = extension_names.data();
-        pCreateInfo->enabledExtensionCount = (uint32_t)extension_names.size();
-
-        replayResult = m_vkFuncs.real_vkCreateInstance(pPacket->pCreateInfo, NULL, &inst);
-
-        pCreateInfo->ppEnabledExtensionNames = saved_ppExtensions;
-        pCreateInfo->enabledExtensionCount = savedExtensionCount;
-
-        if (ppEnabledLayerNames) {
-            // restore the packets CreateInfo struct
-            vktrace_free(ppEnabledLayerNames[pCreateInfo->enabledLayerCount - 1]);
-            vktrace_free(ppEnabledLayerNames);
-            pCreateInfo->ppEnabledLayerNames = saved_ppLayers;
-        }
-
-        if (replayResult == VK_SUCCESS) {
-            m_objMapper.add_to_instances_map(*(pPacket->pInstance), inst);
+    // Add any extensions that are both replayable and in the packet
+    for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; i++) {
+        if (find(outlist.begin(), outlist.end(), pCreateInfo->ppEnabledExtensionNames[i]) == outlist.end()) {
+            extension_names.push_back(pCreateInfo->ppEnabledExtensionNames[i]);
         }
     }
+    pCreateInfo->ppEnabledExtensionNames = extension_names.data();
+    pCreateInfo->enabledExtensionCount = (uint32_t)extension_names.size();
+
+    replayResult = m_vkFuncs.real_vkCreateInstance(pPacket->pCreateInfo, NULL, &inst);
+
+    pCreateInfo->ppEnabledExtensionNames = saved_ppExtensions;
+    pCreateInfo->enabledExtensionCount = savedExtensionCount;
+
+    if (ppEnabledLayerNames) {
+        // restore the packets CreateInfo struct
+        vktrace_free(ppEnabledLayerNames[pCreateInfo->enabledLayerCount - 1]);
+        vktrace_free(ppEnabledLayerNames);
+        pCreateInfo->ppEnabledLayerNames = saved_ppLayers;
+    }
+
+    if (replayResult == VK_SUCCESS) {
+        m_objMapper.add_to_instances_map(*(pPacket->pInstance), inst);
+    }
+
     return replayResult;
 }
 
@@ -355,67 +356,67 @@ bool vkReplay::getQueueFamilyIdx(VkDevice traceDevice, VkDevice replayDevice, ui
 
 VkResult vkReplay::manually_replay_vkCreateDevice(packet_vkCreateDevice *pPacket) {
     VkResult replayResult = VK_ERROR_VALIDATION_FAILED_EXT;
-    if (!m_display->m_initedVK) {
-        VkDevice device;
-        VkPhysicalDevice remappedPhysicalDevice = m_objMapper.remap_physicaldevices(pPacket->physicalDevice);
-        VkDeviceCreateInfo *pCreateInfo;
-        char **ppEnabledLayerNames = NULL, **saved_ppLayers;
-        if (remappedPhysicalDevice == VK_NULL_HANDLE) {
-            vktrace_LogError("Skipping vkCreateDevice() due to invalid remapped VkPhysicalDevice.");
-            return VK_ERROR_VALIDATION_FAILED_EXT;
-        }
-        const char strScreenShot[] = "VK_LAYER_LUNARG_screenshot";
 
-        pCreateInfo = (VkDeviceCreateInfo *)pPacket->pCreateInfo;
-        if (g_pReplaySettings->screenshotList != NULL) {
-            // enable screenshot layer if it is available and not already in list
-            bool found_ss = false;
-            for (uint32_t i = 0; i < pCreateInfo->enabledLayerCount; i++) {
-                if (!strcmp(pCreateInfo->ppEnabledLayerNames[i], strScreenShot)) {
+    VkDevice device;
+    VkPhysicalDevice remappedPhysicalDevice = m_objMapper.remap_physicaldevices(pPacket->physicalDevice);
+    VkDeviceCreateInfo *pCreateInfo;
+    char **ppEnabledLayerNames = NULL, **saved_ppLayers;
+    if (remappedPhysicalDevice == VK_NULL_HANDLE) {
+        vktrace_LogError("Skipping vkCreateDevice() due to invalid remapped VkPhysicalDevice.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+    const char strScreenShot[] = "VK_LAYER_LUNARG_screenshot";
+
+    pCreateInfo = (VkDeviceCreateInfo *)pPacket->pCreateInfo;
+    if (g_pReplaySettings->screenshotList != NULL) {
+        // enable screenshot layer if it is available and not already in list
+        bool found_ss = false;
+        for (uint32_t i = 0; i < pCreateInfo->enabledLayerCount; i++) {
+            if (!strcmp(pCreateInfo->ppEnabledLayerNames[i], strScreenShot)) {
+                found_ss = true;
+                break;
+            }
+        }
+        if (!found_ss) {
+            uint32_t count;
+
+            // query to find if ScreenShot layer is available
+            m_vkFuncs.real_vkEnumerateDeviceLayerProperties(remappedPhysicalDevice, &count, NULL);
+            VkLayerProperties *props = (VkLayerProperties *)vktrace_malloc(count * sizeof(VkLayerProperties));
+            if (props && count > 0) m_vkFuncs.real_vkEnumerateDeviceLayerProperties(remappedPhysicalDevice, &count, props);
+            for (uint32_t i = 0; i < count; i++) {
+                if (!strcmp(props[i].layerName, strScreenShot)) {
                     found_ss = true;
                     break;
                 }
             }
-            if (!found_ss) {
-                uint32_t count;
-
-                // query to find if ScreenShot layer is available
-                m_vkFuncs.real_vkEnumerateDeviceLayerProperties(remappedPhysicalDevice, &count, NULL);
-                VkLayerProperties *props = (VkLayerProperties *)vktrace_malloc(count * sizeof(VkLayerProperties));
-                if (props && count > 0) m_vkFuncs.real_vkEnumerateDeviceLayerProperties(remappedPhysicalDevice, &count, props);
-                for (uint32_t i = 0; i < count; i++) {
-                    if (!strcmp(props[i].layerName, strScreenShot)) {
-                        found_ss = true;
-                        break;
-                    }
+            if (found_ss) {
+                // screenshot layer is available so enable it
+                ppEnabledLayerNames = (char **)vktrace_malloc((pCreateInfo->enabledLayerCount + 1) * sizeof(char *));
+                for (uint32_t i = 0; i < pCreateInfo->enabledLayerCount && ppEnabledLayerNames; i++) {
+                    ppEnabledLayerNames[i] = (char *)pCreateInfo->ppEnabledLayerNames[i];
                 }
-                if (found_ss) {
-                    // screenshot layer is available so enable it
-                    ppEnabledLayerNames = (char **)vktrace_malloc((pCreateInfo->enabledLayerCount + 1) * sizeof(char *));
-                    for (uint32_t i = 0; i < pCreateInfo->enabledLayerCount && ppEnabledLayerNames; i++) {
-                        ppEnabledLayerNames[i] = (char *)pCreateInfo->ppEnabledLayerNames[i];
-                    }
-                    ppEnabledLayerNames[pCreateInfo->enabledLayerCount] = (char *)vktrace_malloc(strlen(strScreenShot) + 1);
-                    strcpy(ppEnabledLayerNames[pCreateInfo->enabledLayerCount++], strScreenShot);
-                    saved_ppLayers = (char **)pCreateInfo->ppEnabledLayerNames;
-                    pCreateInfo->ppEnabledLayerNames = ppEnabledLayerNames;
-                }
-                vktrace_free(props);
+                ppEnabledLayerNames[pCreateInfo->enabledLayerCount] = (char *)vktrace_malloc(strlen(strScreenShot) + 1);
+                strcpy(ppEnabledLayerNames[pCreateInfo->enabledLayerCount++], strScreenShot);
+                saved_ppLayers = (char **)pCreateInfo->ppEnabledLayerNames;
+                pCreateInfo->ppEnabledLayerNames = ppEnabledLayerNames;
             }
+            vktrace_free(props);
         }
+    }
 
-        // Convert all instances of queueFamilyIndex in structure
-        for (uint32_t i = 0; i < pPacket->pCreateInfo->queueCreateInfoCount; i++) {
-            uint32_t replayIdx;
-            if (pPacket->pCreateInfo->pQueueCreateInfos &&
-                getQueueFamilyIdx(pPacket->physicalDevice, remappedPhysicalDevice,
-                                  pPacket->pCreateInfo->pQueueCreateInfos->queueFamilyIndex, &replayIdx)) {
-                *((uint32_t *)&pPacket->pCreateInfo->pQueueCreateInfos->queueFamilyIndex) = replayIdx;
-            } else {
-                vktrace_LogError("vkCreateDevice failed, bad queueFamilyIndex");
-                return VK_ERROR_VALIDATION_FAILED_EXT;
-            }
+    // Convert all instances of queueFamilyIndex in structure
+    for (uint32_t i = 0; i < pPacket->pCreateInfo->queueCreateInfoCount; i++) {
+        uint32_t replayIdx;
+        if (pPacket->pCreateInfo->pQueueCreateInfos &&
+            getQueueFamilyIdx(pPacket->physicalDevice, remappedPhysicalDevice,
+                              pPacket->pCreateInfo->pQueueCreateInfos->queueFamilyIndex, &replayIdx)) {
+            *((uint32_t *)&pPacket->pCreateInfo->pQueueCreateInfos->queueFamilyIndex) = replayIdx;
+        } else {
+            vktrace_LogError("vkCreateDevice failed, bad queueFamilyIndex");
+            return VK_ERROR_VALIDATION_FAILED_EXT;
         }
+    }
 
         replayResult = m_vkFuncs.real_vkCreateDevice(remappedPhysicalDevice, pPacket->pCreateInfo, NULL, &device);
         if (ppEnabledLayerNames) {
@@ -468,7 +469,7 @@ VkResult vkReplay::manually_replay_vkCreateDevice(packet_vkCreateDevice *pPacket
         m_vkFuncs.real_vkUnregisterObjectsNVX =
             (vkFuncs::type_vkUnregisterObjectsNVX)m_vkFuncs.real_vkGetDeviceProcAddr(
                 device, "vkUnregisterObjectsNVX");
-    }
+
     return replayResult;
 }
 
@@ -571,35 +572,35 @@ VkResult vkReplay::manually_replay_vkCreateCommandPool(packet_vkCreateCommandPoo
 
 VkResult vkReplay::manually_replay_vkEnumeratePhysicalDevices(packet_vkEnumeratePhysicalDevices *pPacket) {
     VkResult replayResult = VK_ERROR_VALIDATION_FAILED_EXT;
-    if (!m_display->m_initedVK) {
-        uint32_t deviceCount = *(pPacket->pPhysicalDeviceCount);
-        VkPhysicalDevice *pDevices = pPacket->pPhysicalDevices;
 
-        VkInstance remappedInstance = m_objMapper.remap_instances(pPacket->instance);
-        if (remappedInstance == VK_NULL_HANDLE) {
-            vktrace_LogError("Skipping vkEnumeratePhysicalDevices() due to invalid remapped VkInstance.");
-            return VK_ERROR_VALIDATION_FAILED_EXT;
-        }
-        if (pPacket->pPhysicalDevices != NULL) pDevices = VKTRACE_NEW_ARRAY(VkPhysicalDevice, deviceCount);
-        replayResult = m_vkFuncs.real_vkEnumeratePhysicalDevices(remappedInstance, &deviceCount, pDevices);
+    uint32_t deviceCount = *(pPacket->pPhysicalDeviceCount);
+    VkPhysicalDevice *pDevices = pPacket->pPhysicalDevices;
 
-        // TODO handle different number of physical devices in trace versus replay
-        if (deviceCount != *(pPacket->pPhysicalDeviceCount)) {
-            vktrace_LogWarning("Number of physical devices mismatched in replay %u versus trace %u.", deviceCount,
-                               *(pPacket->pPhysicalDeviceCount));
-        } else if (deviceCount == 0) {
-            vktrace_LogError("vkEnumeratePhysicalDevices number of gpus is zero.");
-        } else if (pDevices != NULL) {
-            vktrace_LogVerbose("Enumerated %d physical devices in the system.", deviceCount);
-        }
-        // TODO handle enumeration results in a different order from trace to replay
-        for (uint32_t i = 0; i < deviceCount; i++) {
-            if (pDevices != NULL) {
-                m_objMapper.add_to_physicaldevices_map(pPacket->pPhysicalDevices[i], pDevices[i]);
-            }
-        }
-        VKTRACE_DELETE(pDevices);
+    VkInstance remappedInstance = m_objMapper.remap_instances(pPacket->instance);
+    if (remappedInstance == VK_NULL_HANDLE) {
+        vktrace_LogError("Skipping vkEnumeratePhysicalDevices() due to invalid remapped VkInstance.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
     }
+    if (pPacket->pPhysicalDevices != NULL) pDevices = VKTRACE_NEW_ARRAY(VkPhysicalDevice, deviceCount);
+    replayResult = m_vkFuncs.real_vkEnumeratePhysicalDevices(remappedInstance, &deviceCount, pDevices);
+
+    // TODO handle different number of physical devices in trace versus replay
+    if (deviceCount != *(pPacket->pPhysicalDeviceCount)) {
+        vktrace_LogWarning("Number of physical devices mismatched in replay %u versus trace %u.", deviceCount,
+                           *(pPacket->pPhysicalDeviceCount));
+    } else if (deviceCount == 0) {
+        vktrace_LogError("vkEnumeratePhysicalDevices number of gpus is zero.");
+    } else if (pDevices != NULL) {
+        vktrace_LogVerbose("Enumerated %d physical devices in the system.", deviceCount);
+    }
+    // TODO handle enumeration results in a different order from trace to replay
+    for (uint32_t i = 0; i < deviceCount; i++) {
+        if (pDevices != NULL) {
+            m_objMapper.add_to_physicaldevices_map(pPacket->pPhysicalDevices[i], pDevices[i]);
+        }
+    }
+    VKTRACE_DELETE(pDevices);
+
     return replayResult;
 }
 
@@ -3029,34 +3030,47 @@ VkResult vkReplay::manually_replay_vkCreateXcbSurfaceKHR(packet_vkCreateXcbSurfa
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
 
-#if defined(PLATFORM_LINUX) && !defined(ANDROID)
-#if defined VK_USE_PLATFORM_XCB_KHR && defined VKREPLAY_USE_WSI_XCB
-    VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
-    VkXcbSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.connection = pSurf->connection;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined VK_USE_PLATFORM_XLIB_KHR && defined VKREPLAY_USE_WSI_XLIB
-    VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
-    VkXlibSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.dpy = pSurf->dpy;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined VK_USE_PLATFORM_WAYLAND_KHR && defined VKREPLAY_USE_WSI_WAYLAND
-    VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
-    VkWaylandSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.display = pSurf->display;
-    createInfo.surface = pSurf->surface;
-    replayResult = m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+#if defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
+#elif defined PLATFORM_LINUX
+#if VK_USE_PLATFORM_XCB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
+        VkXcbSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.connection = pSurf->connection;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+/*#if defined VK_USE_PLATFORM_XLIB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXlib::NAME) == 0) {
+        VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
+        VkXlibSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.dpy = pSurf->dpy;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif*/
+#if defined VK_USE_PLATFORM_WAYLAND_KHR
+    if (strcasecmp(m_displayServer, vkDisplayWayland::NAME) == 0) {
+        VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
+        VkWaylandSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.display = pSurf->display;
+        createInfo.surface = pSurf->surface;
+        replayResult =
+            m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+#if !defined VK_USE_PLATFORM_XCB_KHR && !defined VK_USE_PLATFORM_WAYLAND_KHR
+#error manually_replay_vkCreateXcbSurfaceKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_XCB_KHR or VK_USE_PLATFORM_WAYLAND_KHR or VK_USE_PLATFORM_ANDROID_KHR
 #endif
 #elif defined WIN32
     VkIcdSurfaceWin32 *pSurf = (VkIcdSurfaceWin32 *)m_display->get_surface();
@@ -3087,37 +3101,49 @@ VkResult vkReplay::manually_replay_vkCreateXlibSurfaceKHR(packet_vkCreateXlibSur
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
 
-#if defined PLATFORM_LINUX && defined VK_USE_PLATFORM_XLIB_KHR && defined VKREPLAY_USE_WSI_XLIB
-    VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
-    VkXlibSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.dpy = pSurf->dpy;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_XCB_KHR && defined VKREPLAY_USE_WSI_XCB
-    VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
-    VkXcbSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.connection = pSurf->connection;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_WAYLAND_KHR && defined VKREPLAY_USE_WSI_WAYLAND
-    VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
-    VkWaylandSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.display = pSurf->display;
-    createInfo.surface = pSurf->surface;
-    replayResult = m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
+#if defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
 // TODO
 #elif defined PLATFORM_LINUX
-#error manually_replay_vkCreateXlibSurfaceKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_XLIB_KHR or VK_USE_PLATFORM_XCB_KHR or VK_USE_PLATFORM_ANDROID_KHR
+/*if defined VK_USE_PLATFORM_XLIB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXlib::NAME) == 0) {
+        VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
+        VkXlibSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.dpy = pSurf->dpy;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif*/
+#if defined VK_USE_PLATFORM_XCB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
+        VkXcbSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.connection = pSurf->connection;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+#if defined VK_USE_PLATFORM_WAYLAND_KHR
+    if (strcasecmp(m_displayServer, vkDisplayWayland::NAME) == 0) {
+        VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
+        VkWaylandSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.display = pSurf->display;
+        createInfo.surface = pSurf->surface;
+        replayResult =
+            m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+#if !defined VK_USE_PLATFORM_XCB_KHR && !defined VK_USE_PLATFORM_WAYLAND_KHR
+#error manually_replay_vkCreateXlibSurfaceKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_XCB_KHR or VK_USE_PLATFORM_WAYLAND_KHR or VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #elif defined WIN32
     VkIcdSurfaceWin32 *pSurf = (VkIcdSurfaceWin32 *)m_display->get_surface();
     VkWin32SurfaceCreateInfoKHR createInfo;
@@ -3146,37 +3172,49 @@ VkResult vkReplay::manually_replay_vkCreateWaylandSurfaceKHR(packet_vkCreateWayl
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
 
-#if defined PLATFORM_LINUX && defined VK_USE_PLATFORM_WAYLAND_KHR && defined VKREPLAY_USE_WSI_WAYLAND
-    VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
-    VkWaylandSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.display = pSurf->display;
-    createInfo.surface = pSurf->surface;
-    replayResult = m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_XCB_KHR && defined VKREPLAY_USE_WSI_XCB
-    VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
-    VkXcbSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.connection = pSurf->connection;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_XLIB_KHR && defined VKREPLAY_USE_WSI_XLIB
-    VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
-    VkXlibSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.dpy = pSurf->dpy;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
+#if defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
 // TODO
 #elif defined PLATFORM_LINUX
-#error manually_replay_vkCreateWaylandSurfaceKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_WAYLAND_KHR or VK_USE_PLATFORM_XLIB_KHR or VK_USE_PLATFORM_XCB_KHR or VK_USE_PLATFORM_ANDROID_KHR
+#if defined VK_USE_PLATFORM_WAYLAND_KHR
+    if (strcasecmp(m_displayServer, vkDisplayWayland::NAME) == 0) {
+        VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
+        VkWaylandSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.display = pSurf->display;
+        createInfo.surface = pSurf->surface;
+        replayResult =
+            m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+#if defined VK_USE_PLATFORM_XCB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
+        VkXcbSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.connection = pSurf->connection;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+/*#if defined VK_USE_PLATFORM_XLIB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
+        VkXlibSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.dpy = pSurf->dpy;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedinstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif*/
+#if !defined VK_USE_PLATFORM_WAYLAND_KHR && !defined VK_USE_PLATFORM_XCB_KHR
+#error manually_replay_vkCreateWaylandSurfaceKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_WAYLAND_KHR or VK_USE_PLATFORM_XCB_KHR or VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #elif defined WIN32
     VkIcdSurfaceWin32 *pSurf = (VkIcdSurfaceWin32 *)m_display->get_surface();
     VkWin32SurfaceCreateInfoKHR createInfo;
@@ -3214,34 +3252,48 @@ VkResult vkReplay::manually_replay_vkCreateWin32SurfaceKHR(packet_vkCreateWin32S
     createInfo.hinstance = pSurf->hinstance;
     createInfo.hwnd = pSurf->hwnd;
     replayResult = m_vkFuncs.real_vkCreateWin32SurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined(PLATFORM_LINUX) && !defined(ANDROID)
-#if defined VK_USE_PLATFORM_XCB_KHR && defined VKREPLAY_USE_WSI_XCB
-    VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
-    VkXcbSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.connection = pSurf->connection;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined VK_USE_PLATFORM_XLIB_KHR && defined VKREPLAY_USE_WSI_XLIB
-    VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
-    VkXlibSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.dpy = pSurf->dpy;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined VK_USE_PLATFORM_WAYLAND_KHR && defined VKREPLAY_USE_WSI_WAYLAND
-    VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
-    VkWaylandSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.display = pSurf->display;
-    createInfo.surface = pSurf->surface;
-    replayResult = m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
+// TODO
+#elif defined PLATFORM_LINUX
+#if defined VK_USE_PLATFORM_XCB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
+        VkXcbSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.connection = pSurf->connection;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+/*#if defined VK_USE_PLATFORM_XLIB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXlib::NAME) == 0) {
+        VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
+        VkXlibSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.dpy = pSurf->dpy;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif*/
+#if defined VK_USE_PLATFORM_WAYLAND_KHR
+    if (strcasecmp(m_displayServer, vkDisplayWayland::NAME) == 0) {
+        VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
+        VkWaylandSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.display = pSurf->display;
+        createInfo.surface = pSurf->surface;
+        replayResult =
+            m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+#if !defined VK_USE_PLATFORM_XCB_KHR && !defined VK_USE_PLATFORM_WAYLAND_KHR
+#error manually_replay_vkCreateWin32SurfaceKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_WAYLAND_KHR or VK_USE_PLATFORM_XCB_KHR or VK_USE_PLATFORM_ANDROID_KHR
 #endif
 #else
     vktrace_LogError("manually_replay_vkCreateWin32SurfaceKHR not implemented on this playback platform");
@@ -3271,37 +3323,7 @@ VkResult vkReplay::manually_replay_vkCreateAndroidSurfaceKHR(packet_vkCreateAndr
     createInfo.hinstance = pSurf->hinstance;
     createInfo.hwnd = pSurf->hwnd;
     replayResult = m_vkFuncs.real_vkCreateWin32SurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined(PLATFORM_LINUX)
-#if !defined(ANDROID)
-#if defined VK_USE_PLATFORM_XCB_KHR && defined VKREPLAY_USE_WSI_XCB
-    VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
-    VkXcbSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.connection = pSurf->connection;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined VK_USE_PLATFORM_XLIB_KHR && defined VKREPLAY_USE_WSI_XLIB
-    VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
-    VkXlibSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.dpy = pSurf->dpy;
-    createInfo.window = pSurf->window;
-    replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#elif defined VK_USE_PLATFORM_WAYLAND_KHR && defined VKREPLAY_USE_WSI_WAYLAND
-    VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
-    VkWaylandSurfaceCreateInfoKHR createInfo;
-    createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
-    createInfo.pNext = pPacket->pCreateInfo->pNext;
-    createInfo.flags = pPacket->pCreateInfo->flags;
-    createInfo.display = pSurf->display;
-    createInfo.surface = pSurf->surface;
-    replayResult = m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#endif
-#else
+#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
     VkIcdSurfaceAndroid *pSurf = (VkIcdSurfaceAndroid *)m_display->get_surface();
     VkAndroidSurfaceCreateInfoKHR createInfo;
     createInfo.sType = pPacket->pCreateInfo->sType;
@@ -3309,7 +3331,47 @@ VkResult vkReplay::manually_replay_vkCreateAndroidSurfaceKHR(packet_vkCreateAndr
     createInfo.flags = pPacket->pCreateInfo->flags;
     createInfo.window = pSurf->window;
     replayResult = m_vkFuncs.real_vkCreateAndroidSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
-#endif  // ANDROID
+#elif defined PLATFORM_LINUX
+#if defined VK_USE_PLATFORM_XCB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
+        VkXcbSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.connection = pSurf->connection;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXcbSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+/*#if defined VK_USE_PLATFORM_XLIB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXlib::NAME) == 0) {
+        VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
+        VkXlibSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.dpy = pSurf->dpy;
+        createInfo.window = pSurf->window;
+        replayResult = m_vkFuncs.real_vkCreateXlibSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif*/
+#if defined VK_USE_PLATFORM_WAYLAND_KHR
+    if (strcasecmp(m_displayServer, vkDisplayWayland::NAME) == 0) {
+        VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
+        VkWaylandSurfaceCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
+        createInfo.pNext = pPacket->pCreateInfo->pNext;
+        createInfo.flags = pPacket->pCreateInfo->flags;
+        createInfo.display = pSurf->display;
+        createInfo.surface = pSurf->surface;
+        replayResult =
+            m_vkFuncs.real_vkCreateWaylandSurfaceKHR(remappedInstance, &createInfo, pPacket->pAllocator, &local_pSurface);
+    }
+#endif
+#if !defined VK_USE_PLATFORM_XCB_KHR && !defined VK_USE_PLATFORM_WAYLAND_KHR
+#error manually_replay_vkCreateAndroidSurfaceKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_WAYLAND_KHR or VK_USE_PLATFORM_XCB_KHR or VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #else
     vktrace_LogError("manually_replay_vkCreateAndroidSurfaceKHR not implemented on this playback platform");
     replayResult = VK_ERROR_FEATURE_NOT_PRESENT;
@@ -3408,29 +3470,42 @@ VkBool32 vkReplay::manually_replay_vkGetPhysicalDeviceXcbPresentationSupportKHR(
         return VK_FALSE;
     }
 
-#if defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_XCB
-    VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceXcbPresentationSupportKHR(
-        remappedphysicalDevice, pPacket->queueFamilyIndex, pSurf->connection, m_display->get_screen_handle()->root_visual));
-#elif defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_XLIB
-    VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceXlibPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
-                                                                         pSurf->dpy, m_display->get_screen_handle()->root_visual));
-#elif defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_WAYLAND
-    VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceWaylandPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
-                                                                            pSurf->display));
-#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
+#if defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
     // This is not defined for anndroid
     return VK_TRUE;
 #elif defined PLATFORM_LINUX
-#error manually_replay_vkGetPhysicalDeviceXcbPresentationSupportKHR on PLATFORM_LINUX requires one of VKREPLAY_USE_WSI_XCB or VKREPLAY_USE_WSI_XLIB or VKREPLAY_USE_WSI_WAYLAND or VK_USE_PLATFORM_ANDROID_KHR
+#if defined VK_USE_PLATFORM_XCB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        vkDisplayXcb *pDisp = (vkDisplayXcb *)m_display;
+        return (m_vkFuncs.real_vkGetPhysicalDeviceXcbPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                            pDisp->get_connection_handle(),
+                                                                            pDisp->get_screen_handle()->root_visual));
+    }
+#endif
+/*#if defined VK_USE_PLATFORM_XLIB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXlib::NAME) == 0) {
+        VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
+        return (m_vkFuncs.real_vkGetPhysicalDeviceXlibPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                             pSurf->dpy,
+m_display->get_screen_handle()->root_visual));
+    }
+#endif*/
+#if defined VK_USE_PLATFORM_WAYLAND_KHR
+    if (strcasecmp(m_displayServer, vkDisplayWayland::NAME) == 0) {
+        vkDisplayWayland *pDisp = (vkDisplayWayland *)m_display;
+        return (m_vkFuncs.real_vkGetPhysicalDeviceWaylandPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                                pDisp->get_display_handle()));
+    }
+#endif
+#if !defined VK_USE_PLATFORM_XCB_KHR && !defined VK_USE_PLATFORM_WAYLAND_KHR
+#error manually_replay_vkGetPhysicalDeviceXcbPresentationSupportKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_XCB_KHR, VK_USE_PLATFORM_WAYLAND_KHR, or VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #elif defined WIN32
     return (m_vkFuncs.real_vkGetPhysicalDeviceWin32PresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex));
 #else
     vktrace_LogError("manually_replay_vkGetPhysicalDeviceXcbPresentationSupportKHR not implemented on this playback platform");
-    return VK_FALSE;
 #endif
+    return VK_FALSE;
 }
 
 VkBool32 vkReplay::manually_replay_vkGetPhysicalDeviceXlibPresentationSupportKHR(
@@ -3442,29 +3517,42 @@ VkBool32 vkReplay::manually_replay_vkGetPhysicalDeviceXlibPresentationSupportKHR
         return VK_FALSE;
     }
 
-#if defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_XCB
-    VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceXcbPresentationSupportKHR(
-        remappedphysicalDevice, pPacket->queueFamilyIndex, pSurf->connection, m_display->get_screen_handle()->root_visual));
-#elif defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_XLIB
-    VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceXlibPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
-                                                                         pSurf->dpy, m_display->get_screen_handle()->root_visual));
-#elif defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_WAYLAND
-    VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceWaylandPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
-                                                                            pSurf->display));
-#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
+#if defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
     // This is not defined for Android
     return VK_TRUE;
 #elif defined PLATFORM_LINUX
-#error manually_replay_vkGetPhysicalDeviceXlibPresentationSupportKHR on PLATFORM_LINUX requires one of VKREPLAY_USE_WSI_XCB or VKREPLAY_USE_WSI_XLIB or VKREPLAY_USE_WSI_WAYLAND or VK_USE_PLATFORM_ANDROID_KHR
+#if defined VK_USE_PLATFORM_XCB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        vkDisplayXcb *pDisp = (vkDisplayXcb *)m_display;
+        return (m_vkFuncs.real_vkGetPhysicalDeviceXcbPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                            pDisp->get_connection_handle(),
+                                                                            pDisp->get_screen_handle()->root_visual));
+    }
+#endif
+/*#if defined VK_USE_PLATFORM_XLIB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXlib::NAME) == 0) {
+        VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
+        return (m_vkFuncs.real_vkGetPhysicalDeviceXlibPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                             pSurf->dpy,
+m_display->get_screen_handle()->root_visual));
+    }
+#endif*/
+#if defined VK_USE_PLATFORM_WAYLAND_KHR
+    if (strcasecmp(m_displayServer, vkDisplayWayland::NAME) == 0) {
+        vkDisplayWayland *pDisp = (vkDisplayWayland *)m_display;
+        return (m_vkFuncs.real_vkGetPhysicalDeviceWaylandPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                                pDisp->get_display_handle()));
+    }
+#endif
+#if !defined VK_USE_PLATFORM_XCB_KHR && !defined VK_USE_PLATFORM_WAYLAND_KHR
+#error manually_replay_vkGetPhysicalDeviceXlibPresentationSupportKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_XCB_KHR, VK_USE_PLATFORM_WAYLAND_KHR or VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #elif defined WIN32
     return (m_vkFuncs.real_vkGetPhysicalDeviceWin32PresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex));
 #else
     vktrace_LogError("manually_replay_vkGetPhysicalDeviceXlibPresentationSupportKHR not implemented on this playback platform");
-    return VK_FALSE;
 #endif
+    return VK_FALSE;
 }
 
 VkBool32 vkReplay::manually_replay_vkGetPhysicalDeviceWaylandPresentationSupportKHR(
@@ -3476,29 +3564,42 @@ VkBool32 vkReplay::manually_replay_vkGetPhysicalDeviceWaylandPresentationSupport
         return VK_FALSE;
     }
 
-#if defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_XCB
-    VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceXcbPresentationSupportKHR(
-        remappedphysicalDevice, pPacket->queueFamilyIndex, pSurf->connection, m_display->get_screen_handle()->root_visual));
-#elif defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_XLIB
-    VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceXlibPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
-                                                                         pSurf->dpy, m_display->get_screen_handle()->root_visual));
-#elif defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_WAYLAND
-    VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceWaylandPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
-                                                                            pSurf->display));
-#elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
+#if defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
     // This is not defined for Android
     return VK_TRUE;
 #elif defined PLATFORM_LINUX
-#error manually_replay_vkGetPhysicalDeviceWaylandPresentationSupportKHR on PLATFORM_LINUX requires one of VKREPLAY_USE_WSI_XCB or VKREPLAY_USE_WSI_XLIB or VKREPLAY_USE_WSI_WAYLAND or VK_USE_PLATFORM_ANDROID_KHR
+#if defined VK_USE_PLATFORM_XCB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        vkDisplayXcb *pDisp = (vkDisplayXcb *)m_display;
+        return (m_vkFuncs.real_vkGetPhysicalDeviceXcbPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                            pDisp->get_connection_handle(),
+                                                                            pDisp->get_screen_handle()->root_visual));
+    }
+#endif
+/*#if defined VK_USE_PLATFORM_XLIB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXlib::NAME) == 0) {
+        VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
+        return (m_vkFuncs.real_vkGetPhysicalDeviceXlibPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                             pSurf->dpy,
+m_display->get_screen_handle()->root_visual));
+    }
+#endif*/
+#if VK_USE_PLATFORM_WAYLAND_KHR
+    if (strcasecmp(m_displayServer, vkDisplayWayland::NAME) == 0) {
+        vkDisplayWayland *pDisp = (vkDisplayWayland *)m_display;
+        return (m_vkFuncs.real_vkGetPhysicalDeviceWaylandPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                                pDisp->get_display_handle()));
+    }
+#endif
+#if !defined VK_USE_PLATFORM_XCB_KHR && !defined VK_USE_PLATFORM_WAYLAND_KHR
+#error manually_replay_vkGetPhysicalDeviceWaylandPresentationSupportKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_XCB_KHR, VK_USE_PLATFORM_WAYLAND_KHR or VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #elif defined WIN32
     return (m_vkFuncs.real_vkGetPhysicalDeviceWin32PresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex));
 #else
     vktrace_LogError("manually_replay_vkGetPhysicalDeviceWaylandPresentationSupportKHR not implemented on this playback platform");
-    return VK_FALSE;
 #endif
+    return VK_FALSE;
 }
 
 VkBool32 vkReplay::manually_replay_vkGetPhysicalDeviceWin32PresentationSupportKHR(
@@ -3510,27 +3611,39 @@ VkBool32 vkReplay::manually_replay_vkGetPhysicalDeviceWin32PresentationSupportKH
 
 #if defined WIN32
     return (m_vkFuncs.real_vkGetPhysicalDeviceWin32PresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex));
-#elif defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_XCB
-    VkIcdSurfaceXcb *pSurf = (VkIcdSurfaceXcb *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceXcbPresentationSupportKHR(
-        remappedphysicalDevice, pPacket->queueFamilyIndex, pSurf->connection, m_display->get_screen_handle()->root_visual));
-#elif defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_XLIB
-    VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceXlibPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
-                                                                         pSurf->dpy, m_display->get_screen_handle()->root_visual));
-#elif defined PLATFORM_LINUX && defined VKREPLAY_USE_WSI_WAYLAND
-    VkIcdSurfaceWayland *pSurf = (VkIcdSurfaceWayland *)m_display->get_surface();
-    return (m_vkFuncs.real_vkGetPhysicalDeviceWaylandPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
-                                                                            pSurf->display));
 #elif defined PLATFORM_LINUX && defined VK_USE_PLATFORM_ANDROID_KHR
     // This is not defined for Android
     return VK_TRUE;
 #elif defined PLATFORM_LINUX
-#error manually_replay_vkGetPhysicalDeviceWin32PresentationSupportKHR on PLATFORM_LINUX requires one of VKREPLAY_USE_WSI_XCB or VKREPLAY_USE_WSI_XLIB or VKREPLAY_USE_WSI_WAYLAND or VK_USE_PLATFORM_ANDROID_KHR
+#if defined VK_USE_PLATFORM_XCB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXcb::NAME) == 0) {
+        vkDisplayXcb *pDisp = (vkDisplayXcb *)m_display;
+        return (m_vkFuncs.real_vkGetPhysicalDeviceXcbPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                            pDisp->get_connection_handle(),
+                                                                            pDisp->get_screen_handle()->root_visual));
+    }
+#endif
+/*#if defined VK_USE_PLATFORM_XLIB_KHR
+    if (strcasecmp(m_displayServer, vkDisplayXlib::NAME) == 0) {
+        VkIcdSurfaceXlib *pSurf = (VkIcdSurfaceXlib *)m_display->get_surface();
+        return (m_vkFuncs.real_vkGetPhysicalDeviceXlibPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                         pSurf->dpy, m_display->get_screen_handle()->root_visual));
+    }
+#endif*/
+#if defined VK_USE_PLATFORM_WAYLAND_KHR
+    if (strcasecmp(m_displayServer, vkDisplayWayland::NAME) == 0) {
+        vkDisplayWayland *pDisp = (vkDisplayWayland *)m_display;
+        return (m_vkFuncs.real_vkGetPhysicalDeviceWaylandPresentationSupportKHR(remappedphysicalDevice, pPacket->queueFamilyIndex,
+                                                                                pDisp->get_display_handle()));
+    }
+#endif
+#if !defined VK_USE_PLATFORM_XCB_KHR && !defined VK_USE_PLATFORM_WAYLAND_KHR
+#error manually_replay_vkGetPhysicalDeviceWin32PresentationSupportKHR on PLATFORM_LINUX requires one of VK_USE_PLATFORM_XCB_KHR, VK_USE_PLATFORM_WAYLAND_KHR or VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #else
     vktrace_LogError("manually_replay_vkGetPhysicalDeviceWin32PresentationSupportKHR not implemented on this playback platform");
-    return VK_FALSE;
 #endif
+    return VK_FALSE;
 }
 
 static std::unordered_map<VkDescriptorUpdateTemplateKHR, VkDescriptorUpdateTemplateCreateInfoKHR *>

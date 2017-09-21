@@ -21,11 +21,10 @@ execute_process(COMMAND ${PYTHON_EXECUTABLE} ${SCRIPTS_DIR}/lvl_genvk.py -regist
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
-    if(BUILD_WSI_XCB_SUPPORT AND VKREPLAY_WSI_SELECTION STREQUAL XCB)
-        set(OS_REPLAYER_LIBS xcb ${LIBRARIES})
-    elseif(BUILD_WSI_WAYLAND_SUPPORT AND VKREPLAY_WSI_SELECTION STREQUAL WAYLAND)
-        set(OS_REPLAYER_LIBS ${WAYLAND_CLIENT_LIBRARIES} ${LIBRARIES})
-    endif()
+    set (LIBRARIES ${LIBRARIES} 
+            ${CMAKE_CURRENT_SOURCE_DIR}/libwayland-client.a ffi
+            ${CMAKE_CURRENT_SOURCE_DIR}/libxcb.a Xau)
+	set (OS_REPLAYER_LIBS ${LIBRARIES})
     
     # TODO Add Mir Support
 endif()
