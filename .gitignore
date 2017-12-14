@@ -24,10 +24,6 @@ libs/Win32/Debug/*
 *.sdf
 *.filters
 .*.swp
-build
-build32
-dbuild
-rbuild
 vktrace/src/vktrace_extensions/vktracevulkan/codegen_vktrace_utils
 vktrace/src/vktrace_extensions/vktracevulkan/vkreplay/codegen
 vktrace/src/vktrace_extensions/vktracevulkan/vulkan/codegen_utils

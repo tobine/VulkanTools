@@ -1,0 +1,95 @@
+From dc3a44091674659f5b83cc517763406d4118f2be Mon Sep 17 00:00:00 2001
+From: Mike Weiblen <mikew@lunarg.com>
+Date: Tue, 18 Jul 2017 13:42:36 -0600
+Subject: [PATCH 1/5] vkjson: HACK to comply with JSON schema
+
+---
+ libs/vkjson/vkjson.cc | 37 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/libs/vkjson/vkjson.cc b/libs/vkjson/vkjson.cc
+index 177be92..a8a8a5a 100644
+--- a/libs/vkjson/vkjson.cc
++++ b/libs/vkjson/vkjson.cc
+@@ -36,6 +36,8 @@
+ #include <cJSON.h>
+ #include <vulkan/vk_sdk_platform.h>
+
++#define ENABLE_DEVSIM_SCHEMA 1
++
+ namespace {
+
+ inline bool IsIntegral(double value) {
+@@ -340,6 +342,17 @@ inline bool Iterate(Visitor* visitor, VkJsonLayer* layer) {
+
+ template <typename Visitor>
+ inline bool Iterate(Visitor* visitor, VkJsonDevice* device) {
++#ifdef ENABLE_DEVSIM_SCHEMA
++  static char kDevsimSchema[256] = "https://raw.githubusercontent.com/LunarG/VulkanTools/mikew_devsim_schema/devsim_TEMPORARY/schema.json";
++  return visitor->Visit("$schema", &kDevsimSchema) &&
++         visitor->Visit("VkPhysicalDeviceProperties", &device->properties) &&
++         visitor->Visit("VkPhysicalDeviceFeatures", &device->features);
++         // visitor->Visit("VkPhysicalDeviceMemoryProperties", &device->memory) &&
++         // visitor->Visit("ArrayOfVkQueueFamilyProperties", &device->queues) &&
++         // visitor->Visit("ArrayOfVkExtensionProperties", &device->extensions) &&
++         // visitor->Visit("ArrayOfVkLayerProperties", &device->layers) &&
++         // visitor->Visit("ArrayOfVkFormatProperties", &device->formats);
++#else
+   return visitor->Visit("properties", &device->properties) &&
+          visitor->Visit("features", &device->features) &&
+          visitor->Visit("memory", &device->memory) &&
+@@ -347,6 +360,7 @@ inline bool Iterate(Visitor* visitor, VkJsonDevice* device) {
+          visitor->Visit("extensions", &device->extensions) &&
+          visitor->Visit("layers", &device->layers) &&
+          visitor->Visit("formats", &device->formats);
++#endif
+ }
+
+ template <typename Visitor>
+@@ -377,9 +391,18 @@ inline cJSON* ToJsonValue(const T& value) {
+ }
+
+ inline cJSON* ToJsonValue(const uint64_t& value) {
++#ifdef ENABLE_DEVSIM_SCHEMA
++  // HACK FIXME This does NOT correctly implement 64-bit integers!
++  // From https://github.com/DaveGamble/cJSON/issues/162
++  // Quote: "cJSON won't support 64 bit numbers.  One reason is that
++  // C89 doesn't provide a 64 bit integer type.  The other reason is
++  // simplicity.  The 53 bits from a double are enough for most purposes."
++  return cJSON_CreateNumber(static_cast<double>(value));
++#else
+   char string[19] = {0};  // "0x" + 16 digits + terminal \0
+   snprintf(string, sizeof(string), "0x%016" PRIx64, value);
+   return cJSON_CreateString(string);
++#endif
+ }
+
+ template <typename T, typename = EnableForEnum<T>, typename = void,
+@@ -487,10 +510,24 @@ inline bool AsValue(cJSON* json_value, int32_t* value) {
+ }
+
+ inline bool AsValue(cJSON* json_value, uint64_t* value) {
++#ifdef ENABLE_DEVSIM_SCHEMA
++  // HACK FIXME This does NOT correctly implement 64-bit integers!
++  // From https://github.com/DaveGamble/cJSON/issues/162
++  // Quote: "cJSON won't support 64 bit numbers.  One reason is that
++  // C89 doesn't provide a 64 bit integer type.  The other reason is
++  // simplicity.  The 53 bits from a double are enough for most purposes."
++  double d = json_value->valuedouble;
++  if (json_value->type != cJSON_Number || !IsIntegral(d) ||
++      d < 0.0 || d > static_cast<double>(std::numeric_limits<uint64_t>::max()))
++    return false;
++  *value = static_cast<uint64_t>(d);
++  return true;
++#else
+   if (json_value->type != cJSON_String)
+     return false;
+   int result = std::sscanf(json_value->valuestring, "0x%016" PRIx64, value);
+   return result == 1;
++#endif
+ }
+
+ inline bool AsValue(cJSON* json_value, uint32_t* value) {
+--
+2.7.4
+

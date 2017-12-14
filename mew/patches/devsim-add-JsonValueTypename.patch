@@ -1,0 +1,43 @@
+From 8b0c7b9f2a1253c07abf75f52803c07d68c38d3c Mon Sep 17 00:00:00 2001
+From: Mike Weiblen <mikew@lunarg.com>
+Date: Fri, 23 Jun 2017 19:23:11 -0600
+Subject: [PATCH 2/5] devsim: add JsonValueTypename
+
+---
+ layersvt/device_simulation.cpp | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/layersvt/device_simulation.cpp b/layersvt/device_simulation.cpp
+index 00b918a..ea24abd 100644
+--- a/layersvt/device_simulation.cpp
++++ b/layersvt/device_simulation.cpp
+@@ -227,6 +227,26 @@ VkResult EnumerateAll(std::vector<T> *vect, std::function<VkResult(uint32_t *, T
+     return result;
+ }
+
++// Return the name of a Json::Value type.
++const char *JsonValueTypename(const Json::Value &value) {
++    const char *result = "unknown";
++    switch (value.type()) {
++#define CASE(x) case x: result = #x; break;
++        CASE(Json::nullValue);
++        CASE(Json::intValue);
++        CASE(Json::uintValue);
++        CASE(Json::realValue);
++        CASE(Json::stringValue);
++        CASE(Json::booleanValue);
++        CASE(Json::arrayValue);
++        CASE(Json::objectValue);
++#undef CASE
++        default:
++            break;
++    }
++    return result;
++}
++
+ // Global variables //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+ std::mutex global_lock;  // Enforce thread-safety for this layer's containers.
+--
+2.7.4
+

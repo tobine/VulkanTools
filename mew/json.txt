@@ -1,0 +1,18 @@
+JSON Canonical Form
+https://tools.ietf.org/html/draft-staykov-hu-json-canonical-form-00
+http://gibson042.github.io/canonicaljson-spec/
+http://wiki.laptop.org/go/Canonical_JSON
+
+https://github.com/gibson042/canonicaljson-spec
+
+https://github.com/dominictarr/JSON.sh
+
+https://github.com/stedolan/jq
+https://github.com/paulhammond/jp/
+
+
+https://www.skorks.com/2013/04/the-best-way-to-pretty-print-json-on-the-command-line/
+
+http://xmodulo.com/validate-json-command-line-linux.html
+
+

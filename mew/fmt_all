@@ -1,0 +1,6 @@
+cd ~/vt/layersvt
+cp device_simulation.cpp x.cpp
+g add x.cpp
+g fmt
+g reset x.cpp
+mv x.cpp device_simulation.cpp

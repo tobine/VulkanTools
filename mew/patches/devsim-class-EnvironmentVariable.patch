@@ -1,0 +1,53 @@
+From 6464249b7c60829c078a9d3baa188e19025bd4bc Mon Sep 17 00:00:00 2001
+From: Mike Weiblen <mikew@lunarg.com>
+Date: Tue, 20 Jun 2017 17:02:41 -0600
+Subject: [PATCH 3/5] devsim: class EnvironmentVariable
+
+---
+ layersvt/device_simulation.cpp | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/layersvt/device_simulation.cpp b/layersvt/device_simulation.cpp
+index ea24abd..95d63d6 100644
+--- a/layersvt/device_simulation.cpp
++++ b/layersvt/device_simulation.cpp
+@@ -119,6 +119,36 @@ const char *AndroidGetEnv(const char *key) {
+
+     return nullptr;
+ }
++
++#ifdef FUTURE
++class EnvironmentVariable {
++public:
++    EnvironmentVariable() = delete;
++    EnvironmentVariable(const char* const envar_name) : name_(envar_name),value_(""){
++#if !defined(__ANDROID__) && !defined(_WIN32)
++    const char *value = getenv(name());
++    if(value) { value_ = value;}
++#elif defined(_WIN32)
++    DWORD size = GetEnvironmentVariable(name(), nullptr, 0);
++    if (size > 0) {
++    std::vector<char> buffer(size);
++    GetEnvironmentVariable(name(), buffer.data(), size);
++    value_ = buffer.data();
++    }
++#else
++    // TODO
++#endif
++    DebugPrintf("\tenvar \"%s\" = \"%s\"\n", name(), value());
++    }
++
++    const char* name() const { return name_.c_str(); }
++    const char* value() const { return value_.c_str(); }
++    bool empty() const { return value_.empty();}
++
++private:
++    const std::string name_;
++    std::string value_;
++};
+ #endif
+
+ // Retrieve the value of an environment variable.
+--
+2.7.4
+

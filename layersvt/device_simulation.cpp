@@ -524,8 +524,7 @@ class JsonLoader {
     // For use as warn_func in GET_VALUE_WARN().  Return true if warning occurred.
     static bool WarnIfGreater(const char *name, const uint64_t new_value, const uint64_t old_value) {
         if (new_value > old_value) {
-            DebugPrintf("WARN \"%s\" JSON value (%" PRIu64 ") is greater than existing value (%" PRIu64 ")\n", name, new_value,
-                        old_value);
+//            DebugPrintf("WARN \"%s\" JSON value (%" PRIu64 ") is greater than existing value (%" PRIu64 ")\n", name, new_value, old_value);
             return true;
         }
         return false;
@@ -1059,8 +1058,7 @@ void JsonLoader::GetValue(const Json::Value &parent, const char *name, VkPhysica
         dest->memoryTypeCount = type_count;
         for (int i = 0; i < type_count; ++i) {
             if (dest->memoryTypes[i].heapIndex >= dest->memoryHeapCount) {
-                DebugPrintf("WARN \"memoryType[%" PRIu32 "].heapIndex\" (%" PRIu32 ") exceeds memoryHeapCount (%" PRIu32 ")\n", i,
-                            dest->memoryTypes[i].heapIndex, dest->memoryHeapCount);
+//                DebugPrintf("WARN \"memoryType[%" PRIu32 "].heapIndex\" (%" PRIu32 ") exceeds memoryHeapCount (%" PRIu32 ")\n", i, dest->memoryTypes[i].heapIndex, dest->memoryHeapCount);
             }
         }
     }

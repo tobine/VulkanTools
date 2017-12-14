@@ -1,0 +1,1 @@
+m clobber && mj && m test && cat build/tests/device_simulation_layer_test_1.txt

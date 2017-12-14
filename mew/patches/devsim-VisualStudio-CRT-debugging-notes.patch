@@ -1,0 +1,32 @@
+From 37d0c5b0f3bc58d27d728fd6c55f65debd478bb1 Mon Sep 17 00:00:00 2001
+From: Mike Weiblen <mikew@lunarg.com>
+Date: Tue, 20 Jun 2017 17:04:06 -0600
+Subject: [PATCH 4/5] devsim: VisualStudio CRT debugging notes
+
+---
+ layersvt/device_simulation.cpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/layersvt/device_simulation.cpp b/layersvt/device_simulation.cpp
+index 95d63d6..ac4266e 100644
+--- a/layersvt/device_simulation.cpp
++++ b/layersvt/device_simulation.cpp
+@@ -195,6 +195,15 @@ void AndroidPrintf(VkLogLevel level, const char *fmt, va_list args) {
+     }
+     free(message);
+ }
++
++#ifdef FUTURE
++#if defined(_WIN32) && !defined(NDEBUG)
++#include <crtdbg.h>
++#endif
++#if defined(_WIN32) && !defined(NDEBUG)
++    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);
++    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
++#endif
+ #endif
+
+ void DebugPrintf(const char *fmt, ...) {
+--
+2.7.4
+
