@@ -30,15 +30,17 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/../layers)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/../layers)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/../layers)
 
-
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../layers
-    ${CMAKE_CURRENT_SOURCE_DIR}/../loader
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/vulkan
+#    ${CMAKE_CURRENT_SOURCE_DIR}/../layers
+#    ${CMAKE_CURRENT_SOURCE_DIR}/../loader
+#    ${CMAKE_CURRENT_SOURCE_DIR}/../include/vulkan
+    ${V_LVL_ROOT_DIR}/loader
+    ${V_LVL_ROOT_DIR}/layers
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${CMAKE_PROJECT_BINARY_DIR}
-    ${CMAKE_BINARY_DIR}
+#    ${PROJECT_BINARY_DIR}
+    ${CMAKE_BINARY_DIR}/${V_LVL_RELATIVE_LOCATION}
+
 )
 
 if (WIN32)
@@ -131,7 +133,7 @@ SUBDIRLIST(ST_SUBDIRS ${CMAKE_LAYER_FACTORY_SOURCE_DIR})
 # Loop through all subdirectories, creating a factory-based layer for each
 FOREACH(subdir ${ST_SUBDIRS})
     file(GLOB INTERCEPTOR_SOURCES ${CMAKE_LAYER_FACTORY_SOURCE_DIR}/${subdir}/*.h ${CMAKE_LAYER_FACTORY_SOURCE_DIR}/${subdir}/*.cpp)
-    add_factory_layer(${subdir} ${CMAKE_LAYER_FACTORY_SOURCE_DIR}/${subdir} layer_factory.cpp layer_factory.h ../layers/vk_layer_table.cpp ${INTERCEPTOR_SOURCES})
+    add_factory_layer(${subdir} ${CMAKE_LAYER_FACTORY_SOURCE_DIR}/${subdir} layer_factory.cpp layer_factory.h ${V_LVL_ROOT_DIR}/layers/vk_layer_table.cpp ${INTERCEPTOR_SOURCES})
 ENDFOREACH()
 
 # Add targets for JSON file install on Linux.
