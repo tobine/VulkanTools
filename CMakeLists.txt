@@ -69,7 +69,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     option(INSTALL_LVL_FILES "Install content from LoaderAndValidationLayers repo" ON)
 endif()
 
-set (V_LVL_RELATIVE_LOCATION submodules/Vulkan-LoaderAndValidationLayers)
+set (V_LVL_RELATIVE_LOCATION subtrees/Vulkan-LoaderAndValidationLayers)
 
 add_subdirectory(${V_LVL_RELATIVE_LOCATION})
 
