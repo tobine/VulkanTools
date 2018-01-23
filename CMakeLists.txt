@@ -15,6 +15,8 @@ string(TOLOWER ${API_NAME} API_LOWERCASE)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(PythonInterp 3 REQUIRED)
 
+set (PYTHON_CMD ${PYTHON_EXECUTABLE})
+
 option(USE_CCACHE "Use ccache" OFF)
 if (USE_CCACHE)
     find_program(CCACHE_FOUND ccache)
