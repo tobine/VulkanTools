@@ -7,9 +7,6 @@ set BASE_DIR=%BUILD_DIR%subtrees
 set JSONCPP_DIR=%BASE_DIR%\jsoncpp
 set V_LVL_DIR=%BASE_DIR%\Vulkan-LoaderAndValidationLayers
 
-
-git submodule update --init --recursive
-
 :build_jsoncpp
    echo.
    echo Building %JSONCPP_DIR%

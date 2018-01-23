@@ -70,7 +70,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 set (V_LVL_RELATIVE_LOCATION subtrees/Vulkan-LoaderAndValidationLayers)
-set (SUBPROJECTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/submodules)
+set (SUBPROJECTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/subtrees)
 
 add_subdirectory(${V_LVL_RELATIVE_LOCATION})
 
@@ -115,7 +115,7 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 endif()
 
 # Define a variable for a default root location to the gslang, SPIRV-Tools and other external sources and cache it to allow the user to customize it as needed
-set(SUBPROJECT_SOURCE_ROOT ${V_LVL_ROOT_DIR}/submodules CACHE STRING "Root path to VulkanTools submodule repositories")
+set(SUBPROJECT_SOURCE_ROOT ${V_LVL_ROOT_DIR}/subtrees CACHE STRING "Root path to VulkanTools subtree repositories")
 
 find_path(JSONCPP_INCLUDE_DIR json/json.h HINTS "${SUBPROJECTS_DIR}/jsoncpp/dist"
                                                    "${SUBPROJECTS_DIR}/JsonCpp/dist"
