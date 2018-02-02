@@ -29,10 +29,10 @@ export VK_INSTANCE_LAYERS="VK_LAYER_LUNARG_device_simulation"
 #export VK_DEVSIM_EXIT_ON_ERROR="1"
 #export VK_LOADER_DEBUG="all"
 
-VKJSON_INFO="${PWD}/../submodules/Vulkan-LoaderAndValidationLayers/libs/vkjson/vkjson_info"
-
 #############################################################################
-# Test #1 input datafile, and filename of output.
+# Test #1 VkJson_Info test
+
+VKJSON_INFO="${PWD}/../submodules/Vulkan-LoaderAndValidationLayers/libs/vkjson/vkjson_info"
 
 FILENAME_01_IN="devsim_test1_in_ArrayOfVkFormatProperties.json:devsim_test1_in.json"
 FILENAME_01_GOLD="devsim_test1_gold.json"
@@ -55,7 +55,35 @@ rm ${FILENAME_01_STDOUT}
 if [ "$RES" -eq 0 ] ; then
    printf "$GREEN[  PASSED  ]$NC ${PGM}\n"
 else
-   printf "$RED[  FAILED  ]$NC file compare failed\n"
+   printf "$RED[  FAILED  ]$NC vkjson file compare failed\n"
+   printf "TEST FAILED\n"
+   exit 1
+fi
+
+#############################################################################
+# Test #2 VulkanInfo test
+
+VULKANINFO="${PWD}/../submodules/Vulkan-LoaderAndValidationLayers/demos/vulkaninfo"
+
+FILENAME_02_IN="${PWD}/../submodules/Vulkan-LoaderAndValidationLayers/demos/vulkaninfo.json"
+FILENAME_02_OUT="vulkaninfo_test_2.json"
+FILENAME_02_DIFF="vulkaninfo_diff.txt"
+
+export VK_DEVSIM_FILENAME="${FILENAME_02_IN}"
+
+${VULKANINFO} -j > ${FILENAME_02_OUT}
+
+diff ${FILENAME_02_IN} ${FILENAME_02_OUT} > ${FILENAME_02_DIFF}
+RES=$?
+rm ${FILENAME_02_DIFF}
+rm ${FILENAME_02_OUT}
+
+#############################################################################
+
+if [ "$RES" -eq 0 ] ; then
+   printf "$GREEN[  PASSED  ]$NC ${PGM}\n"
+else
+   printf "$RED[  FAILED  ]$NC vulkaninfo file compare failed\n"
    printf "TEST FAILED\n"
    exit 1
 fi
