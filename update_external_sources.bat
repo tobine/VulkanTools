@@ -7,6 +7,8 @@ set BASE_DIR=%BUILD_DIR%submodules
 set JSONCPP_DIR=%BASE_DIR%\jsoncpp
 set V_LVL_DIR=%BASE_DIR%\Vulkan-LoaderAndValidationLayers
 
+REM Save current directory to restore location when complete
+set current_dir=%cd%
 
 git submodule update --init --recursive
 
@@ -28,3 +30,4 @@ git submodule update --init --recursive
     cd "%V_LVL_DIR%"
     call .\update_external_sources.bat %1 %2 %3 %4 %5 %6 %7 %8 %9
 
+cd "%current_dir%"

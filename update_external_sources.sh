@@ -25,3 +25,5 @@ python amalgamate.py
 echo "Running LVL update external sources"
 cd ${BASEDIR}/Vulkan-LoaderAndValidationLayers
 ./update_external_sources.sh "$@"
+
+cd ${CURRENT_DIR}
