@@ -1113,10 +1113,12 @@ void JsonLoader::GetValue(const Json::Value &parent, int index, VkLayerPropertie
     if (value.type() != Json::objectValue) {
         return;
     }
+    DebugPrintf("\t\tJsonLoader::GetValue(VkLayerProperties)\n");
     GET_ARRAY(layerName);  // size < VK_MAX_EXTENSION_NAME_SIZE
     GET_VALUE(specVersion);
     GET_VALUE(implementationVersion);
     GET_ARRAY(description);  // size < VK_MAX_DESCRIPTION_SIZE
+DebugPrintf("INFO\t\t\tindex %" PRIu32 " layerName \"%s\" specVersion %" PRIu32 "\n", index, dest->layerName, dest->specVersion);
 }
 
 #undef GET_VALUE
@@ -1262,6 +1264,7 @@ VkResult EnumerateProperties(uint32_t src_count, const T *src_props, uint32_t *d
 
 VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(VkPhysicalDevice physicalDevice, const char *pLayerName,
                                                                   uint32_t *pCount, VkExtensionProperties *pProperties) {
+DebugPrintf("EnumerateDeviceExtensionProperties \"%s\" %s %d\n", pLayerName, (pProperties?"values":"count"), *pCount);
     VkResult result = VK_SUCCESS;
     std::lock_guard<std::mutex> lock(global_lock);
     const auto dt = instance_dispatch_table(physicalDevice);
@@ -1271,6 +1274,7 @@ VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(VkPhysicalDevi
     } else {
         result = dt->EnumerateDeviceExtensionProperties(physicalDevice, pLayerName, pCount, pProperties);
     }
+DebugPrintf("EnumerateDeviceExtensionProperties \"%s\" %s %d result=%d\n", pLayerName, (pProperties?"values":"count"), *pCount, result);
     return result;
 }
 
@@ -1406,6 +1410,8 @@ extern "C" VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL devsimEnumerateInstanc
     } else {
         result = pChain->CallDown(pPropertyCount, pProperties);
     }
+
+printf("devsimEnumerateInstanceLayerProperties %s %d result=%d\n", (pProperties?"values":"count"), *pPropertyCount, result);
     return result;
 }
 
@@ -1428,6 +1434,8 @@ extern "C" VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL devsimEnumerateInstanc
         DebugPrintf("NOTICE: JSON section ArrayOfVkExtensionProperties is deprecated,\nand will not be implemented for the devsim_1_0_0 schema.\n");
         *pPropertyCount = 0;
     }
+
+printf("devsimEnumerateInstanceExtensionProperties \"%s\" %s %d result=%d\n", pLayerName, (pProperties?"values":"count"), *pPropertyCount, result);
     return result;
 }
 
