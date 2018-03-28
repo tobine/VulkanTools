@@ -419,6 +419,11 @@ VkResult EnumerateAll(std::vector<T> *vect, std::function<VkResult(uint32_t *, T
     return result;
 }
 
+template <typename T>
+void VectorAppend(T *dst, const T *src) {
+    dst->insert(dst->end(), src->begin(), src->end());
+}
+
 // Global variables //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 std::mutex global_lock;  // Enforce thread-safety for this layer's containers.
@@ -1249,6 +1254,37 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo *pCreat
 
     const auto dt = instance_dispatch_table(*pInstance);
 
+#if 0
+    result = EnumerateAll<VkLayerProperties>(&instance_arrayof_layer_properties, [&](uint32_t *count, VkLayerProperties *results) {
+        return dt->EnumerateInstanceLayerProperties(count, results);
+    });
+    if (result) {
+        // TODO
+        return result;
+    }
+    // Temporarily append a "null_layer" as a proxy for pLayerName==NULL in Enumerate*ExtensionProperties().
+    const VkLayerProperties null_layer = {"", 0, 0, ""};
+    instance_arrayof_layer_properties.push_back(null_layer);
+
+    // Get list of instance extensions from all layers, including null_layer
+    assert(dt->EnumerateInstanceExtensionProperties);
+    instance_arrayof_extension_properties.clear();
+    for (const auto &layer : instance_arrayof_layer_properties) {
+        const char *const layer_name = (layer.layerName[0]) ? layer.layerName : nullptr;
+        ArrayOfVkExtensionProperties instance_extensions;
+        result = EnumerateAll<VkExtensionProperties>(&instance_extensions, [&](uint32_t *count, VkExtensionProperties *results) {
+            return dt->EnumerateInstanceExtensionProperties(layer_name, count, results);
+        });
+        if (result) {
+            // TODO
+            return result;
+        }
+        // Append this layer's extensions to the instance extension list.
+        // TODO should this keep extensions separate by layer, rather than one be list?
+        VectorAppend(&instance_arrayof_extension_properties, &instance_extensions);
+    }
+#endif
+
     std::vector<VkPhysicalDevice> physical_devices;
     result = EnumerateAll<VkPhysicalDevice>(&physical_devices, [&](uint32_t *count, VkPhysicalDevice *results) {
         return dt->EnumeratePhysicalDevices(*pInstance, count, results);
@@ -1266,6 +1302,33 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo *pCreat
         DebugPrintf("\tdeviceName \"%s\"\n", pdd.physical_device_properties_.deviceName);
         dt->GetPhysicalDeviceFeatures(physical_device, &pdd.physical_device_features_);
         dt->GetPhysicalDeviceMemoryProperties(physical_device, &pdd.physical_device_memory_properties_);
+
+#if 0
+        // Get list of device extensions from all layers, including null_layer
+        assert(dt->EnumerateDeviceExtensionProperties);
+        pdd.arrayof_extension_properties_.clear();
+        for (const auto &layer : instance_arrayof_layer_properties) {
+            const char *const layer_name = (layer.layerName[0]) ? layer.layerName : nullptr;
+            ArrayOfVkExtensionProperties device_extensions;
+            result = EnumerateAll<VkExtensionProperties>(&device_extensions, [&](uint32_t *count, VkExtensionProperties *results) {
+                return dt->EnumerateDeviceExtensionProperties(physical_device, layer_name, count, results);
+            });
+            if (result) {
+                return result;
+            }
+            // Append this layer's extensions to the device extension list.
+            // TODO should this keep extensions separate by layer, rather than one be list?
+            VectorAppend(&pdd.arrayof_extension_properties_, &device_extensions);
+        }
+
+        // Remove the temporary null_layer
+        assert(instance_arrayof_layer_properties.size() > 0);
+        instance_arrayof_layer_properties.pop_back();
+#endif
+
+// TODO Is it really useful to preserve instance_arrayof_layer_properties?
+// TODO Seems that DevSim is not the way to modify Layers; use the Loader's capabilities.
+// TODO Should Instance Extensions be appended to each Devices' Extension list?
 
         // Override PDD members with values from configuration file(s).
         JsonLoader json_loader(pdd);
@@ -1431,6 +1494,7 @@ VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFormatProperties2KHR(VkPhysicalDevic
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL GetInstanceProcAddr(VkInstance instance, const char *pName) {
+DebugPrintf("GetInstanceProcAddr(\"%s\")\n", pName);
 // Apply the DRY principle, see https://en.wikipedia.org/wiki/Don%27t_repeat_yourself
 #define GET_PROC_ADDR(func) \
     if (strcmp("vk" #func, pName) == 0) return reinterpret_cast<PFN_vkVoidFunction>(func);
