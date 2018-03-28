@@ -1363,6 +1363,7 @@ VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties(VkPhysicalDevice physical
     }
 }
 
+// TODO FIXME mewmew : convert 2KHR -> 2
 VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties2KHR(VkPhysicalDevice physicalDevice,
                                                            VkPhysicalDeviceProperties2KHR *pProperties) {
     GetPhysicalDeviceProperties(physicalDevice, &pProperties->properties);
