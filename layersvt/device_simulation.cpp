@@ -428,6 +428,8 @@ uint32_t loader_layer_iface_version = CURRENT_LOADER_LAYER_INTERFACE_VERSION;
 typedef std::vector<VkQueueFamilyProperties> ArrayOfVkQueueFamilyProperties;
 typedef std::unordered_map<uint32_t /*VkFormat*/, VkFormatProperties> ArrayOfVkFormatProperties;
 typedef std::vector<VkLayerProperties> ArrayOfVkLayerProperties;
+typedef std::vector<VkExtensionProperties> ArrayOfVkExtensionProperties;
+typedef std::unordered_map<std::string, ArrayOfVkExtensionProperties> ArrayOfVkLayerExtensionProperties;
 
 // FormatProperties utilities ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -481,6 +483,10 @@ assert(instance!=VK_NULL_HANDLE);
     ArrayOfVkQueueFamilyProperties arrayof_queue_family_properties_;
     ArrayOfVkFormatProperties arrayof_format_properties_;
     ArrayOfVkLayerProperties arrayof_layer_properties_;
+    ArrayOfVkExtensionProperties arrayof_core_instance_extension_properties_;
+    ArrayOfVkExtensionProperties arrayof_core_device_extension_properties_;
+    ArrayOfVkLayerExtensionProperties arrayof_layer_instance_extension_properties_;
+    ArrayOfVkLayerExtensionProperties arrayof_layer_device_extension_properties_;
 
    private:
     PhysicalDeviceData &operator=(const PhysicalDeviceData &) = delete;
@@ -515,6 +521,7 @@ class JsonLoader {
     enum class SchemaId {
         kUnknown = 0,
         kDevsim100,
+        kDevsim110,
     };
 
     SchemaId IdentifySchema(const Json::Value &value);
@@ -529,6 +536,7 @@ class JsonLoader {
     void GetValue(const Json::Value &parent, int index, VkQueueFamilyProperties *dest);
     void GetValue(const Json::Value &parent, int index, DevsimFormatProperties *dest);
     void GetValue(const Json::Value &parent, int index, VkLayerProperties *dest);
+    void GetValue(const Json::Value &parent, int index, VkExtensionProperties *dest);
 
     // For use as warn_func in GET_VALUE_WARN().  Return true if warning occurred.
     static bool WarnIfGreater(const char *name, const uint64_t new_value, const uint64_t old_value) {
@@ -737,6 +745,42 @@ class JsonLoader {
         return static_cast<int>(dest->size());
     }
 
+    int GetArray(const Json::Value &parent, const char *name, ArrayOfVkExtensionProperties *dest) {
+        const Json::Value value = parent[name];
+        if (value.type() != Json::arrayValue) {
+            return -1;
+        }
+        DebugPrintf("\t\tJsonLoader::GetValue(ArrayOfVkExtensionProperties)\n");
+        dest->clear();
+        const int count = static_cast<int>(value.size());
+        for (int i = 0; i < count; ++i) {
+            VkExtensionProperties extension_properties = {};
+            GetValue(value, i, &extension_properties);
+            dest->push_back(extension_properties);
+        }
+        return static_cast<int>(dest->size());
+    }
+
+    int GetArray(const Json::Value &parent, const char *name, ArrayOfVkLayerExtensionProperties *dest) {
+#if 0   // FUTURE.  see GetArray(ArrayOfVkFormatProperties)
+        const Json::Value value = parent[name];
+        if (value.type() != Json::arrayValue) {
+            return -1;
+        }
+        DebugPrintf("\t\tJsonLoader::GetValue(ArrayOfVkDeviceExtensionProperties)\n");
+        dest->clear();
+        const int count = static_cast<int>(value.size());
+
+        for (int i = 0; i < count; ++i) {
+            DevsimDeviceExtensionProperties devsim_device_extension_properties = {};
+            GetValue(value, i, &devsim_device_extension_properties);
+            ...
+            dest->insert({format, vk_format_properties});
+        }
+#endif
+        return static_cast<int>(dest->size());
+    }
+
     PhysicalDeviceData &pdd_;
 };
 
@@ -799,6 +843,20 @@ DebugPrintf("NOTICE: JSON section ArrayOfVkExtensionProperties is deprecated,\na
             }
             break;
 
+        case SchemaId::kDevsim110:
+            GetValue(root, "VkPhysicalDeviceProperties", &pdd_.physical_device_properties_);
+            GetValue(root, "VkPhysicalDeviceFeatures", &pdd_.physical_device_features_);
+            GetValue(root, "VkPhysicalDeviceMemoryProperties", &pdd_.physical_device_memory_properties_);
+            GetArray(root, "ArrayOfVkQueueFamilyProperties", &pdd_.arrayof_queue_family_properties_);
+            GetArray(root, "ArrayOfVkFormatProperties", &pdd_.arrayof_format_properties_);
+            GetArray(root, "ArrayOfVkLayerProperties", &pdd_.arrayof_layer_properties_);
+            GetArray(root, "ArrayOfVkCoreInstanceExtensionProperties", &pdd_.arrayof_core_instance_extension_properties_);
+            GetArray(root, "ArrayOfVkLayerInstanceExtensionProperties", &pdd_.arrayof_layer_instance_extension_properties_);
+            GetArray(root, "ArrayOfVkCoreDeviceExtensionProperties", &pdd_.arrayof_core_device_extension_properties_);
+            GetArray(root, "ArrayOfVkLayerDeviceExtensionProperties", &pdd_.arrayof_layer_device_extension_properties_);
+            // TODO ensure "ArrayOfVkExtensionProperties" is ILLEGAL
+            break;
+
         case SchemaId::kUnknown:
         default:
             return false;
@@ -818,6 +876,10 @@ JsonLoader::SchemaId JsonLoader::IdentifySchema(const Json::Value &value) {
     if (strcmp(schema_string, "https://schema.khronos.org/vulkan/devsim_1_0_0.json#") == 0) {
         schema_id = SchemaId::kDevsim100;
     }
+    if (strcmp(schema_string, "https://schema.khronos.org/vulkan/devsim_1_1_0.json#") == 0) {
+        schema_id = SchemaId::kDevsim110;
+    }
+
 
     if (schema_id != SchemaId::kUnknown) {
         DebugPrintf("\tDocument schema \"%s\" is schema_id %d\n", schema_string, schema_id);
@@ -1119,6 +1181,17 @@ void JsonLoader::GetValue(const Json::Value &parent, int index, VkLayerPropertie
     GET_VALUE(implementationVersion);
     GET_ARRAY(description);  // size < VK_MAX_DESCRIPTION_SIZE
 DebugPrintf("INFO\t\t\tindex %" PRIu32 " layerName \"%s\" specVersion %" PRIu32 "\n", index, dest->layerName, dest->specVersion);
+}
+
+void JsonLoader::GetValue(const Json::Value &parent, int index, VkExtensionProperties *dest) {
+    const Json::Value value = parent[index];
+    if (value.type() != Json::objectValue) {
+        return;
+    }
+    DebugPrintf("\t\tJsonLoader::GetValue(VkExtensionProperties)\n");
+    GET_ARRAY(extensionName);  // size < VK_MAX_EXTENSION_NAME_SIZE
+    GET_VALUE(specVersion);
+DebugPrintf("INFO\t\t\tindex %" PRIu32 " extensionName \"%s\" specVersion %" PRIu32 "\n", index, dest->extensionName, dest->specVersion);
 }
 
 #undef GET_VALUE
